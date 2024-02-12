@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr};
 
-use rust_elements_wrapper::{
+use boltz_rust::{
     network::{electrum::ElectrumConfig, Chain},
     swaps::{
         boltz::{BoltzApiClient, CreateSwapRequest, SwapStatusRequest, BOLTZ_TESTNET_URL},

@@ -1,12 +1,12 @@
 [package]
-name = "rust_elements_wrapper"
+name = "boltz_rust"
 description = "a boltz client for swaps between BTC/LBTC & LN"
 version = "0.1.1"
 edition = "2021"
 license="MIT"
 
 [lib]
-name = "rust_elements_wrapper"
+name = "boltz_rust"
 path = "src/lib.rs"
 doctest = false
 crate-type = ["staticlib", "cdylib"]

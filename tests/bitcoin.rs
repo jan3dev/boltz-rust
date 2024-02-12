@@ -1,4 +1,4 @@
-use rust_elements_wrapper::{
+use boltz_rust::{
     network::{electrum::ElectrumConfig, Chain},
     swaps::{
         bitcoin::{BtcSwapScript, BtcSwapTx},
@@ -7,6 +7,7 @@ use rust_elements_wrapper::{
     util::secrets::{BtcReverseRecovery, BtcSubmarineRecovery, Preimage, RefundSwapFile, SwapKey},
     Bolt11Invoice, Keypair, Secp256k1,
 };
+
 
 use std::{path::PathBuf, str::FromStr};
 pub mod test_utils;

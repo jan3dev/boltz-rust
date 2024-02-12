@@ -2,3 +2,5 @@ target/
 Cargo.lock
 /.idea
 boltz-*json
+boltz-rust*
+.DS_Store

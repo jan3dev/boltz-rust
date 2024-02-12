@@ -979,13 +979,6 @@ impl CreateSwapResponse {
                 );
 
                 let address = script.to_address(chain)?;
-                println!(
-                    "-----\n{:?}\n{}\n{}\n{}-------",
-                    chain,
-                    address.to_string(),
-                    self.get_funding_address()?,
-                    script == boltz_sub_script
-                );
                 if script == boltz_sub_script
                     && address.to_string() == self.get_funding_address()?
                 {
