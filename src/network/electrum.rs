@@ -4,9 +4,9 @@ use crate::error::Error;
 
 use super::Chain;
 
-pub const DEFAULT_TESTNET_NODE: &str = "electrum.blockstream.info:60002";
-pub const DEFAULT_LIQUID_TESTNET_NODE: &str = "blockstream.info:465";
-pub const DEFAULT_MAINNET_NODE: &str = "electrum.blockstream.info:50002";
+pub const DEFAULT_TESTNET_NODE: &str = "electrum.bullbitcoin.com:60002";
+pub const DEFAULT_LIQUID_TESTNET_NODE: &str = "blockstream.info:995";
+pub const DEFAULT_MAINNET_NODE: &str = "blockstream.info:995";
 pub const DEFAULT_ELECTRUM_TIMEOUT: u8 = 10;
 
 #[derive(Debug, Clone)]
@@ -49,8 +49,8 @@ impl ElectrumConfig {
     }
     pub fn default_liquid() -> Self {
         ElectrumConfig::new(
-            Chain::LiquidTestnet,
-            DEFAULT_LIQUID_TESTNET_NODE,
+            Chain::Liquid,
+            DEFAULT_MAINNET_NODE,
             true,
             true,
             DEFAULT_ELECTRUM_TIMEOUT,
