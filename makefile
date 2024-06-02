@@ -110,7 +110,7 @@ ndk-home:
 bindings: target/bindings.h
 
 target/bindings.h: $(SOURCES)
-	cbindgen src/lib.rs -c cbindgen.toml | grep -v \#include | uniq > $@
+	cbindgen --config cbindgen.toml --crate boltz_rust --output target/bindings.h
 	@echo "[DONE] $@"
 
 copy: 
