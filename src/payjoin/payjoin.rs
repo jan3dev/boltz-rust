@@ -147,22 +147,22 @@ pub fn create_taxi_transaction_internal(
     let max_input_count = client_utxos.len() + server_utxos.len();
     let max_output_count = 4;
     let max_network_fee = expected_network_fee(max_input_count, 0, max_output_count);
-    println!("max_network_fee: {max_network_fee}");
+    log::debug!("max_network_fee: {max_network_fee}");
     let max_asset_fee = fixed_fee + (price * max_network_fee as f64).round() as u64;
-    println!("max_asset_fee: {max_asset_fee}");
+    log::debug!("max_asset_fee: {max_asset_fee}");
     let send_amount = if subtract_fee_from_amount {
         ensure!(send_amount > max_asset_fee);
         send_amount - max_asset_fee
     } else {
         send_amount
     };
-    println!("send_amount: {send_amount}");
+    log::debug!("send_amount: {send_amount}");
 
     let mut selected_utxos = Vec::new();
 
     let mut utxo_asset_amount = 0;
     for utxo in client_utxos.into_iter() {
-        println!("client_utxo value {}", utxo.value);
+        log::debug!("client_utxo value {}", utxo.value);
         utxo_asset_amount += utxo.value;
         selected_utxos.push(utxo);
 
@@ -178,7 +178,7 @@ pub fn create_taxi_transaction_internal(
             break;
         }
     }
-    println!("utxo_asset_amount value {}", utxo_asset_amount);
+    log::debug!("utxo_asset_amount value {}", utxo_asset_amount);
 
     ensure!(utxo_asset_amount >= send_amount + max_asset_fee);
     ensure!(utxo_lbtc_amount >= max_network_fee);
@@ -232,7 +232,7 @@ fn make_server_request(
     match res {
         Ok(resp) => {
             let resp = resp.into_json::<server_api::Response>()?;
-            println!("{:?}", resp);
+            log::debug!("{:?}", resp);
             Ok(resp)
         }
         Err(ureq::Error::Transport(err)) => {
@@ -472,6 +472,6 @@ mod tests {
         );
 
         assert!(result.is_ok());      
-        println!("Transaction result: {:?}", result);
+        log::debug!("Transaction result: {:?}", result);
     }
 }

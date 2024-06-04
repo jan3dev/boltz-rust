@@ -465,7 +465,7 @@ pub extern "C" fn create_taxi_transaction(
         Ok(tx_string) => {   
             let tx_c_string = CString::new(tx_string)
                 .unwrap_or_else(|e| {
-                    println!("Failed to convert string: {:?}", e);
+                    log::error!("Failed to convert string: {:?}", e);
                     CString::new("String conversion failed").unwrap()
                 });
             let tx_ptr = tx_c_string.into_raw(); // Convert CString to *mut c_char
