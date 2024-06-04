@@ -3,3 +3,4 @@ Cargo.lock
 /.idea
 boltz-*json
 /boltz-rust
+boltz-rust-*.tar.gz
