@@ -58,6 +58,7 @@ struct ConstructPsetArgs {
     utxo_lbtc_amount: u64,
     server_change_address: elements::Address,
     lbtc_asset_id: elements::AssetId,
+    is_lowball: bool,
 }
 
 struct ConstructedPset {
@@ -73,6 +74,7 @@ pub fn create_taxi_transaction_internal(
     user_agent: *const c_char,
     api_key: *const c_char,
     subtract_fee_from_amount: bool,
+    is_lowball: bool,
     is_testnet: bool,
 ) -> Result<String, anyhow::Error> {
 
@@ -146,7 +148,7 @@ pub fn create_taxi_transaction_internal(
 
     let max_input_count = client_utxos.len() + server_utxos.len();
     let max_output_count = 4;
-    let max_network_fee = expected_network_fee(max_input_count, 0, max_output_count);
+    let max_network_fee = expected_network_fee(max_input_count, 0, max_output_count, is_lowball);
     log::debug!("max_network_fee: {max_network_fee}");
     let max_asset_fee = fixed_fee + (price * max_network_fee as f64).round() as u64;
     log::debug!("max_asset_fee: {max_asset_fee}");
@@ -196,6 +198,7 @@ pub fn create_taxi_transaction_internal(
         utxo_lbtc_amount,
         server_change_address,
         lbtc_asset_id,
+        is_lowball,
     })?;
 
     let server_pset = pset::remove_explicit_values(blinded_pset.clone());
@@ -263,6 +266,7 @@ fn construct_pset(args: ConstructPsetArgs) -> Result<ConstructedPset, anyhow::Er
         utxo_lbtc_amount,
         server_change_address,
         lbtc_asset_id,
+        is_lowball,
     } = args;
 
     let mut pset = PartiallySignedTransaction::new_v2();
@@ -294,7 +298,7 @@ fn construct_pset(args: ConstructPsetArgs) -> Result<ConstructedPset, anyhow::Er
     })?);
 
     // FIXME: Separate between single-sig and multi-sig inputs
-    let network_fee = expected_network_fee(pset.inputs().len(), 0, 4);
+    let network_fee = expected_network_fee(pset.inputs().len(), 0, 4, is_lowball);
 
     let asset_fee = fixed_fee + (price * network_fee as f64).round() as u64;
 
