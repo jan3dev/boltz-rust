@@ -449,6 +449,7 @@ pub extern "C" fn create_taxi_transaction(
     user_agent: *const c_char,
     api_key: *const c_char,
     subtract_fee_from_amount: bool, 
+    is_lowball: bool,
     is_testnet: bool,
 ) -> TxResult {
     match create_taxi_transaction_internal(
@@ -460,6 +461,7 @@ pub extern "C" fn create_taxi_transaction(
         user_agent,
         api_key,
         subtract_fee_from_amount,
+        is_lowball,
         is_testnet,
     ) {
         Ok(tx_string) => {   
