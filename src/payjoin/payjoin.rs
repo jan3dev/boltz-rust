@@ -333,7 +333,7 @@ fn construct_pset(args: ConstructPsetArgs) -> Result<ConstructedPset, anyhow::Er
     Ok(ConstructedPset { blinded_pset: pset })
 }
 
-fn convert_to_native_utxo(utxo_ffi: &UtxoFFI) -> Result<server_api::Utxo, anyhow::Error> {
+pub(crate) fn convert_to_native_utxo(utxo_ffi: &UtxoFFI) -> Result<server_api::Utxo, anyhow::Error> {
     let txid_cstr = unsafe { CStr::from_ptr(utxo_ffi.txid) };
     let txid_str = txid_cstr.to_str().expect("Invalid UTF-8 string");
     let txid_hash = sha256d::Hash::from_str(txid_str).expect("Invalid hash string");
@@ -472,6 +472,7 @@ mod tests {
             api_key.as_ptr(),
             // mock values above are for mainnet
             false,
+            true,
             false,
         );
 
