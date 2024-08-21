@@ -451,9 +451,7 @@ pub extern "C" fn create_liquid_tx_with_op_return(
     utxos_len: usize,
     op_return_data: *const c_char,
     is_testnet: bool,
-) -> *mut c_char {
-
-    //HERE:T TODO: This aborted on device!
+) -> TxResult {
     let result = catch_unwind(|| {
         let send_address_str = unsafe { CStr::from_ptr(send_address).to_str().unwrap().trim() };
         let change_address_str = unsafe { CStr::from_ptr(change_address).to_str().unwrap().trim() };
@@ -536,7 +534,7 @@ pub extern "C" fn create_liquid_tx_with_op_return(
             });
         }
 
-        // Recalculate fee based on final size
+        // recalculate fee based on final size
         let final_size = tx.weight() / 4; // vsize
         let new_fee_amount = (final_size as f64 * fee_rate).ceil() as u64;
 
@@ -564,12 +562,24 @@ pub extern "C" fn create_liquid_tx_with_op_return(
         let serialized_tx = elements::encode::serialize(&tx);
         let tx_hex = hex::encode(serialized_tx);
 
-        CString::new(tx_hex).unwrap().into_raw()
+        Ok(tx_hex)
     });
 
-    match result {
-        Ok(c_str) => c_str,
-        Err(_) => CString::new("Error creating Liquid transaction").unwrap().into_raw(),
+   match result {
+        Ok(Ok(tx_hex)) => {
+            let tx_c_string = CString::new(tx_hex).unwrap_or_else(|_| CString::new("String conversion failed").unwrap());
+            TxResult {
+                tx_ptr: tx_c_string.into_raw(),
+                error_msg: std::ptr::null_mut(),
+            }
+        },
+        Ok(Err(e)) | Err(e) => {
+            let error_msg = CString::new(format!("Error: {:?}", e)).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+            TxResult {
+                tx_ptr: std::ptr::null_mut(),
+                error_msg: error_msg.into_raw(),
+            }
+        }
     }
 }
 #[repr(C)]
@@ -771,9 +781,131 @@ mod tests {
         assert_eq!(verify_result, 1, "Signature verification failed");
 
         unsafe {
-            CString::from_raw(message_c_str as *mut c_char);
-            CString::from_raw(private_key_c_str as *mut c_char);
-            CString::from_raw(public_key_c_str as *mut c_char);
+            let _ = CString::from_raw(message_c_str as *mut c_char);
+            let _ = CString::from_raw(private_key_c_str as *mut c_char);
+            let _ = CString::from_raw(public_key_c_str as *mut c_char);
+        }
+    }
+
+    #[test]
+    fn test_create_liquid_tx_with_op_return() {
+        use elements::OutPoint;
+        use elements::confidential::{Asset, Value};
+        use std::ffi::CString;
+
+        fn create_utxo(txid: &str, vout: u32, value: u64, asset_id: &str) -> UtxoFFI {
+            let blinding_key = elements::secp256k1_zkp::SecretKey::new(&mut rand::thread_rng());
+            
+            let elements_asset = Asset::Explicit(elements::AssetId::from_str(asset_id).unwrap());
+            let elements_value = Value::Explicit(value);
+            
+            let asset_commitment = elements_asset.commitment();
+            let value_commitment = elements_value.commitment();
+        
+            UtxoFFI {
+                txid: CString::new(txid).unwrap().into_raw(),
+                vout,
+                value,
+                script_pub_key: CString::new("76a914000000000000000000000000000000000000000088ac").unwrap().into_raw(),
+                asset_id: CString::new(asset_id).unwrap().into_raw(),
+                asset_bf: CString::new(hex::encode(blinding_key.secret_bytes())).unwrap().into_raw(),
+                value_bf: CString::new(hex::encode(blinding_key.secret_bytes())).unwrap().into_raw(),
+                asset_commitment: CString::new(hex::encode(asset_commitment.map(|c| c.to_hex()).unwrap_or_default())).unwrap().into_raw(),
+                value_commitment: CString::new(hex::encode(value_commitment.map(|c| c.to_hex()).unwrap_or_default())).unwrap().into_raw(),
+            }
+        }
+    
+        let send_amount = 1_000_000;
+        let fee_rate = 1.0;
+        let send_address = to_c_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6");
+        let change_address = to_c_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6");
+        let liquid_asset_id = "6f0279e9ed041c3d710a9f57d0c02928416460c4b722ae3457a11eec381c526d";
+        let utxos = vec![
+            create_utxo("1234567890123456789012345678901234567890123456789012345678901234", 0, 2_000_000, liquid_asset_id),
+            create_utxo("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd", 1, 1_000_000, liquid_asset_id),
+        ];
+        let op_return_data = to_c_str("48656c6c6f20576f726c64"); // "Hello World" in hex
+        let is_testnet = false;
+    
+        let result = create_liquid_tx_with_op_return(
+            send_amount,
+            fee_rate,
+            send_address,
+            change_address,
+            utxos.as_ptr(),
+            utxos.len(),
+            op_return_data,
+            is_testnet,
+        );
+
+        for utxo in utxos {
+            unsafe {
+                let _ = CString::from_raw(utxo.txid as *mut c_char);
+                let _ = CString::from_raw(utxo.script_pub_key as *mut c_char);
+                let _ = CString::from_raw(utxo.asset_id as *mut c_char);
+                let _ = CString::from_raw(utxo.asset_bf as *mut c_char);
+                let _ = CString::from_raw(utxo.value_bf as *mut c_char);
+                let _ = CString::from_raw(utxo.asset_commitment as *mut c_char);
+                let _ = CString::from_raw(utxo.value_commitment as *mut c_char);
+            }
+        }    
+
+        assert!(result.error_msg.is_null(), "Error occurred: {:?}", unsafe { CStr::from_ptr(result.error_msg) });
+        assert!(!result.tx_ptr.is_null(), "Transaction pointer is null");
+
+        let tx_hex = unsafe { CStr::from_ptr(result.tx_ptr).to_string_lossy().into_owned() };
+        let tx_bytes = hex::decode(&tx_hex).expect("Failed to decode hex");
+        let tx: elements::Transaction = elements::encode::deserialize(&tx_bytes).expect("Failed to deserialize transaction");
+    
+        // verify the transaction structure
+        assert_eq!(tx.version, 2, "Incorrect transaction version");
+        assert_eq!(tx.input.len(), 2, "Incorrect number of inputs");
+        assert!(tx.output.len() >= 3, "Incorrect number of outputs"); // At least 3: main output, OP_RETURN, and fee
+    
+        // verify inputs
+        assert_eq!(tx.input[0].previous_output, OutPoint::new(elements::Txid::from_str("1234567890123456789012345678901234567890123456789012345678901234").unwrap(), 0));
+        assert_eq!(tx.input[1].previous_output, OutPoint::new(elements::Txid::from_str("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd").unwrap(), 1));
+    
+        // verify main output
+        let main_output = &tx.output[0];
+        assert_eq!(main_output.value, Value::Explicit(send_amount));
+        assert_eq!(main_output.asset, Asset::Explicit(elements::AssetId::from_str(liquid_asset_id).unwrap()));
+        assert_eq!(main_output.script_pubkey, ElementsAddress::from_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6").unwrap().script_pubkey());
+    
+        // verify OP_RETURN output
+        let op_return_output = &tx.output[1];
+        assert_eq!(op_return_output.value, Value::Explicit(0));
+        assert_eq!(op_return_output.asset, Asset::Explicit(elements::AssetId::from_str(liquid_asset_id).unwrap()));
+        assert!(op_return_output.script_pubkey.is_op_return());
+        assert_eq!(op_return_output.script_pubkey.as_bytes()[2..], hex::decode("48656c6c6f20576f726c64").unwrap());
+    
+        // verify fee output
+        let fee_output = tx.output.iter().find(|o| o.is_fee()).expect("Fee output not found");
+        assert!(fee_output.value.explicit().unwrap() > 0, "Fee should be greater than 0");
+        assert_eq!(fee_output.asset, Asset::Explicit(elements::AssetId::from_str(liquid_asset_id).unwrap()));
+    
+        // verify change output if present
+        if tx.output.len() > 3 {
+            let change_output = &tx.output[3];
+            assert_eq!(change_output.asset, Asset::Explicit(elements::AssetId::from_str(liquid_asset_id).unwrap()));
+            assert_eq!(change_output.script_pubkey, ElementsAddress::from_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6").unwrap().script_pubkey());
+        }
+
+        // verify fee output is the last output
+        assert!(tx.output.last().unwrap().is_fee(), "Fee output should be the last output");
+    
+        unsafe {
+            let _ = CString::from_raw(send_address as *mut c_char);
+            let _ = CString::from_raw(change_address as *mut c_char);
+            if !op_return_data.is_null() {
+                let _ = CString::from_raw(op_return_data as *mut c_char);
+            }
+            if !result.tx_ptr.is_null() {
+                let _ = CString::from_raw(result.tx_ptr);
+            }
+            if !result.error_msg.is_null() {
+                let _ = CString::from_raw(result.error_msg);
+            }
         }
     }
 }
