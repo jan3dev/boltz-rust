@@ -10,6 +10,7 @@ pub mod swaps;
 pub mod util;
 
 pub use payjoin::payjoin::{create_taxi_transaction_internal, final_tx, UtxoFFI};
+pub use payjoin::op_return::create_liquid_tx_with_op_return_internal;
 
 pub use bitcoin::{
     blockdata::locktime::absolute::LockTime,
@@ -29,6 +30,7 @@ pub use elements::{
     hex::{FromHex, ToHex},
     locktime::LockTime as ElementsLockTime,
     opcodes::all::*,
+    pset::{PartiallySignedTransaction, Output},
     pset::serialize::Serialize,
     script::{Builder as EBuilder, Script},
     secp256k1_zkp::{Keypair as ZKKeyPair, Secp256k1 as ZKSecp256k1},
@@ -60,8 +62,6 @@ pub use swaps::{
     liquid::LBtcSwapTx,
     liquidv2::{LBtcSwapScriptV2, LBtcSwapTxV2},
 };
-
-use crate::payjoin::payjoin::convert_to_native_utxo;
 
 #[no_mangle]
 pub extern "C" fn validate_submarine(
@@ -452,136 +452,36 @@ pub extern "C" fn create_liquid_tx_with_op_return(
     op_return_data: *const c_char,
     is_testnet: bool,
 ) -> TxResult {
-    let result = catch_unwind(|| {
-        let send_address_str = unsafe { CStr::from_ptr(send_address).to_str().unwrap().trim() };
-        let change_address_str = unsafe { CStr::from_ptr(change_address).to_str().unwrap().trim() };
-        let op_return_data_str = unsafe { CStr::from_ptr(op_return_data).to_str().unwrap().trim() };
-        let utxos_slice = unsafe { std::slice::from_raw_parts(utxos, utxos_len) };
-
-        let lbtc_asset_id = if is_testnet {
-            AssetId::from_str("144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49").unwrap()
-        } else {
-            AssetId::from_str("6f0279e9ed041c3d710a9f57d0c02928416460c4b722ae3457a11eec381c526d").unwrap()
-        };
-        let op_return_data = hex::decode(op_return_data_str)
-            .map_err(|e| format!("Invalid OP_RETURN data: {}", e))
-            .expect("Failed to decode OP_RETURN data");
-        let send_address = ElementsAddress::from_str(send_address_str)
-            .map_err(|e| format!("Invalid send address: {}", e))
-            .expect("Failed to parse send address");
-        let change_address = ElementsAddress::from_str(change_address_str)
-            .map_err(|e| format!("Invalid change address: {}", e))
-            .expect("Failed to parse change address");
-        let client_utxos = utxos_slice
-            .iter()
-            .map(convert_to_native_utxo)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Error converting UTXOs: {}", e))
-            .expect("Failed to convert UTXOs");
-
-        let mut tx = Transaction {
-            version: 2,
-            lock_time: elements::LockTime::ZERO,
-            input: Vec::new(),
-            output: Vec::new(),
-        };
-
-        // add inputs
-        for utxo in client_utxos.iter() {
-            tx.input.push(TxIn {
-                previous_output: OutPoint::new(utxo.txid, utxo.vout),
-                script_sig: Script::new(),
-                sequence: Sequence::MAX,
-                witness: TxInWitness::default(),
-                is_pegin: false,
-                asset_issuance: AssetIssuance::default(),
-            });
-        }
-
-        // add main output
-        tx.output.push(TxOut {
-            asset: elements::confidential::Asset::Explicit(lbtc_asset_id),
-            value: elements::confidential::Value::Explicit(send_amount),
-            nonce: elements::confidential::Nonce::Null,
-            script_pubkey: send_address.script_pubkey(),
-            witness: TxOutWitness::default(),
-        });
-
-        // add OP_RETURN output
-        let op_return_script = Script::new_op_return(&op_return_data);
-        tx.output.push(TxOut {
-            asset: elements::confidential::Asset::Explicit(lbtc_asset_id),
-            value: elements::confidential::Value::Explicit(0),
-            nonce: elements::confidential::Nonce::Null,
-            script_pubkey: op_return_script,
-            witness: TxOutWitness::default(),
-        });
-
-        // calculate initial size and fee
-        let initial_size = tx.weight() / 4; // vsize
-        let mut fee_amount = (initial_size as f64 * fee_rate).ceil() as u64;
-
-        // calculate and add change output
-        let total_input: u64 = client_utxos.iter().map(|utxo| utxo.value).sum();
-        let mut change_amount = total_input.saturating_sub(send_amount + fee_amount);
-        if change_amount > 0 {
-            tx.output.push(TxOut {
-                asset: elements::confidential::Asset::Explicit(lbtc_asset_id),
-                value: elements::confidential::Value::Explicit(change_amount),
-                nonce: elements::confidential::Nonce::Null,
-                script_pubkey: change_address.script_pubkey(),
-                witness: TxOutWitness::default(),
-            });
-        }
-
-        // recalculate fee based on final size
-        let final_size = tx.weight() / 4; // vsize
-        let new_fee_amount = (final_size as f64 * fee_rate).ceil() as u64;
-
-        if new_fee_amount > fee_amount {
-            // adjust fee and change if necessary
-            fee_amount = new_fee_amount;
-            change_amount = total_input.saturating_sub(send_amount + fee_amount);
-            
-            // update or remove change output
-            if change_amount > 0 {
-                if let Some(change_output) = tx.output.last_mut() {
-                    if change_output.script_pubkey == change_address.script_pubkey() {
-                        change_output.value = elements::confidential::Value::Explicit(change_amount);
-                    }
-                }
-            } else {
-                tx.output.retain(|o| o.script_pubkey != change_address.script_pubkey());
-            }
-        }
-
-        // add fee output as the last output
-        tx.output.push(TxOut::new_fee(fee_amount, lbtc_asset_id));
-
-        // serialize the transaction
-        let serialized_tx = elements::encode::serialize(&tx);
-        let tx_hex = hex::encode(serialized_tx);
-
-        Ok(tx_hex)
-    });
-
-   match result {
-        Ok(Ok(tx_hex)) => {
-            let tx_c_string = CString::new(tx_hex).unwrap_or_else(|_| CString::new("String conversion failed").unwrap());
+    match create_liquid_tx_with_op_return_internal(
+        send_amount,
+        fee_rate,
+        send_address,
+        change_address,
+        utxos,
+        utxos_len,
+        op_return_data,
+        is_testnet,
+    ) {
+        Ok(pset_base64) => {
+            let tx_c_string = CString::new(pset_base64)
+                .unwrap_or_else(|_| CString::new("String conversion failed").unwrap());
             TxResult {
                 tx_ptr: tx_c_string.into_raw(),
                 error_msg: std::ptr::null_mut(),
             }
-        },
-        Ok(Err(e)) | Err(e) => {
-            let error_msg = CString::new(format!("Error: {:?}", e)).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+        }
+        Err(e) => {
+            let error_msg = CString::new(format!("Error: {:?}", e))
+                .unwrap_or_else(|_| CString::new("Unknown error").unwrap())
+                .into_raw();
             TxResult {
                 tx_ptr: std::ptr::null_mut(),
-                error_msg: error_msg.into_raw(),
+                error_msg,
             }
         }
     }
 }
+
 #[repr(C)]
 pub struct TxResult {
     pub tx_ptr: *mut c_char,

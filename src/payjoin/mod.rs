@@ -2,4 +2,5 @@
 pub mod network_fee;
 pub mod payjoin;
 pub mod pset;
+pub mod op_return;
 pub mod server_api;
