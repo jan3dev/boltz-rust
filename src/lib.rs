@@ -443,6 +443,7 @@ pub extern "C" fn verify_signature_schnorr(
 
 #[no_mangle]
 pub extern "C" fn create_liquid_tx_with_op_return(
+    mnemonic: *const c_char,
     send_amount: u64,
     fee_rate: f64,
     send_address: *const c_char,
@@ -453,6 +454,7 @@ pub extern "C" fn create_liquid_tx_with_op_return(
     is_testnet: bool,
 ) -> TxResult {
     match create_liquid_tx_with_op_return_internal(
+        mnemonic,
         send_amount,
         fee_rate,
         send_address,
