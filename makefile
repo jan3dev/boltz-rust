@@ -138,7 +138,7 @@ copy:
 	cp target/universal/$(BUILD_MODE)/libboltz_rust.a boltz-rust/ios
 	tar -cvzf boltz-rust.tar.gz boltz-rust
 
-	mv boltz-rust.tar.gz boltz-rust-0.1.7.tar.gz
+	mv boltz-rust.tar.gz boltz-rust-0.1.8.tar.gz
 
 ## :
 
