@@ -136,6 +136,7 @@ copy:
 	cp target/x86_64-linux-android/$(BUILD_MODE)/libboltz_rust.so boltz-rust/android/app/src/main/jniLibs/x86_64/
 	cp target/bindings.h boltz-rust/
 	cp target/universal/$(BUILD_MODE)/libboltz_rust.a boltz-rust/ios
+	cp target/aarch64-apple-ios-sim/$(BUILD_MODE)/libboltz_rust.a boltz-rust/ios-sim
 	tar -cvzf boltz-rust.tar.gz boltz-rust
 
 	mv boltz-rust.tar.gz boltz-rust-0.1.8.tar.gz
