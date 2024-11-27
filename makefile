@@ -125,7 +125,7 @@ target/bindings.h: $(SOURCES)
 
 copy:
 	rm -rf boltz-rust
-	mkdir -p boltz-rust/android/app/src/main/jniLibs/arm64-v8a/ boltz-rust/android/app/src/main/jniLibs/armeabi-v7a/ boltz-rust/android/app/src/main/jniLibs/x86/ boltz-rust/android/app/src/main/jniLibs/x86_64/ boltz-rust/ios
+	mkdir -p boltz-rust/android/app/src/main/jniLibs/arm64-v8a/ boltz-rust/android/app/src/main/jniLibs/armeabi-v7a/ boltz-rust/android/app/src/main/jniLibs/x86/ boltz-rust/android/app/src/main/jniLibs/x86_64/ boltz-rust/ios boltz-rust/ios-sim
 
 	@echo target
 	@echo $(BUILD_MODE)
