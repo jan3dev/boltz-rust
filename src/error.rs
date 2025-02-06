@@ -4,12 +4,12 @@ pub enum Error {
     Electrum(electrum_client::Error),
     Hex(String),
     Protocol(String),
-    Key(bitcoin::key::Error),
+    Key(bitcoin::key::ParsePublicKeyError),
     Address(String),
-    Sighash(bitcoin::sighash::Error),
+    Sighash(bitcoin::sighash::TaprootError),
     ElSighash(elements::sighash::Error),
     Secp(bitcoin::secp256k1::Error),
-    HTTP(ureq::Error),
+    HTTP(String),
     JSON(serde_json::Error),
     IO(std::io::Error),
     Bolt11(lightning_invoice::ParseOrSemanticError),
@@ -40,14 +40,20 @@ impl From<bitcoin::hex::HexToBytesError> for Error {
     }
 }
 
-impl From<bitcoin::key::Error> for Error {
-    fn from(value: bitcoin::key::Error) -> Self {
+impl From<bitcoin::key::ParsePublicKeyError> for Error {
+    fn from(value: bitcoin::key::ParsePublicKeyError) -> Self {
         Self::Key(value)
     }
 }
 
 impl From<bitcoin::hex::HexToArrayError> for Error {
     fn from(value: bitcoin::hex::HexToArrayError) -> Self {
+        Self::Hex(value.to_string())
+    }
+}
+
+impl From<hex::FromHexError> for Error {
+    fn from(value: hex::FromHexError) -> Self {
         Self::Hex(value.to_string())
     }
 }
@@ -64,14 +70,15 @@ impl From<elements::address::AddressError> for Error {
     }
 }
 
-impl From<bitcoin::sighash::Error> for Error {
-    fn from(value: bitcoin::sighash::Error) -> Self {
-        Self::Sighash(value)
-    }
-}
 impl From<elements::sighash::Error> for Error {
     fn from(value: elements::sighash::Error) -> Self {
         Self::ElSighash(value)
+    }
+}
+
+impl From<bitcoin::sighash::TaprootError> for Error {
+    fn from(value: bitcoin::sighash::TaprootError) -> Self {
+        Self::Sighash(value)
     }
 }
 
@@ -83,7 +90,7 @@ impl From<bitcoin::secp256k1::Error> for Error {
 
 impl From<ureq::Error> for Error {
     fn from(value: ureq::Error) -> Self {
-        Self::HTTP(value)
+        Self::HTTP(value.to_string())
     }
 }
 
@@ -153,8 +160,8 @@ impl From<bip39::Error> for Error {
     }
 }
 
-impl From<bitcoin::absolute::Error> for Error {
-    fn from(value: bitcoin::absolute::Error) -> Self {
+impl From<bitcoin::absolute::ConversionError> for Error {
+    fn from(value: bitcoin::absolute::ConversionError) -> Self {
         Self::Locktime(value.to_string())
     }
 }
