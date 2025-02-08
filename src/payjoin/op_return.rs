@@ -20,14 +20,16 @@ use elements::{Script, TxOut, TxOutWitness};
 use elements::confidential::{Asset, Nonce, Value, AssetBlindingFactor, ValueBlindingFactor};
 use elements::TxOutSecrets;
 use elements::secp256k1_zkp::SecretKey as ZKSecretKey;
+use elements::bitcoin::secp256k1::PublicKey;
+
 // use elements::hashes::Hash;
 
 
 use super::server_api;
 use super::pset;
 use super::payjoin::convert_to_native_utxo;
+use super::network_fee::expected_network_fee;
 
-use bitcoin::PublicKey;
 use bip39::Mnemonic;
 use bitcoin::bip32::{DerivationPath, Fingerprint, Xpriv};
 use bitcoin::secp256k1::Keypair;
@@ -135,6 +137,7 @@ pub fn create_liquid_tx_with_op_return_internal(
 
     let mut pset = PartiallySignedTransaction::new_v2();
 
+    //HERE: NOTE: Takes all the utxos passed and uses as inputs
     let total_input: u64 = client_utxos.iter().map(|utxo| utxo.value).sum();
     log_message(&format!("[Truther][Rust] Total input value: {}", total_input));
 
@@ -160,6 +163,20 @@ pub fn create_liquid_tx_with_op_return_internal(
     pset.add_output(main_output);
     log_message(&format!("[Truther][Rust] Added main output: amount={}", send_amount));
 
+    // calculate and add change output first if needed
+    let change_amount = total_input.saturating_sub(send_amount);
+    log_message(&format!("[Truther][Rust] Initial change amount: {}", change_amount));
+
+    if change_amount > 0 {
+        let change_output = pset::pset_output(pset::PsetOutput {
+            address: change_address.clone(),
+            asset: lbtc_asset_id,
+            amount: change_amount,
+        })?;
+        pset.add_output(change_output);
+        log_message(&format!("[Truther][Rust] Added change output: {}", change_amount));
+    }
+
     // add OP_RETURN output
     let op_return_script = Script::new_op_return(&op_return_data);
     let op_return_output = Output::from_txout(TxOut {
@@ -172,77 +189,29 @@ pub fn create_liquid_tx_with_op_return_internal(
     pset.add_output(op_return_output);
     log_message("[Truther][Rust] Added OP_RETURN output");
 
-    // serialize the transaction to get an accurate size
-    let temp_tx = pset.extract_tx()?;
-    let serialized_tx = elements::encode::serialize(&temp_tx);
-    let tx_size = serialized_tx.len();
-
-    // calculate fee based on the accurate size
-    let mut fee_amount = (tx_size as f64 * fee_rate).ceil() as u64;
-    log_message(&format!("[Truther][Rust] tx size: {}, Initial fee: {}", tx_size, fee_amount));
-
-    // calculate and add change output
-    let mut change_amount = total_input.saturating_sub(send_amount + fee_amount);
-    log_message(&format!("[Truther][Rust] Initial change amount: {}", change_amount));
-
-    if change_amount > 0 {
-        let change_output = pset::pset_output(pset::PsetOutput {
-            address: change_address.clone(),
-            asset: lbtc_asset_id,
-            amount: change_amount,
-        })?;
-        pset.add_output(change_output);
-        log_message(&format!("[Truther][Rust] Added change output: {}", change_amount));
-
-        // recalculate size and fee after adding change output
-        let temp_tx = pset.extract_tx()?;
-        let serialized_tx = elements::encode::serialize(&temp_tx);
-        let new_tx_size = serialized_tx.len();
-        let new_fee_amount = (new_tx_size as f64 * fee_rate).ceil() as u64;
-        log_message(&format!("[Truther][Rust] New tx size with change: {}, New fee: {}", new_tx_size, new_fee_amount));
-
-        if new_fee_amount > fee_amount {
-            fee_amount = new_fee_amount;
-            change_amount = total_input.saturating_sub(send_amount + fee_amount);
-            log_message(&format!("[Truther][Rust] Adjusted fee: {}, New change amount: {}", fee_amount, change_amount));
-
-            // Update change output
-            if let Some(change_output) = pset.outputs_mut().last_mut() {
-                if change_output.script_pubkey == change_address.script_pubkey() {
-                    *change_output = pset::pset_output(pset::PsetOutput {
-                        address: change_address,
-                        asset: lbtc_asset_id,
-                        amount: change_amount,
-                    })?;
-                    log_message(&format!("[Truther][Rust] Updated change output: {}", change_amount));
-                }
-            }
-        }
-    } else {
-        log_message("[Truther][Rust] No change output added (change amount <= 0)");
-    }
-
     // add fee output as the last output
+    let tx = pset.extract_tx()?;
+    let fee_amount = expected_network_fee(&tx, tx.input.len(), 0, tx.output.len(), false); // using regular fee calculation, not lowball
     pset.add_output(pset::pset_network_fee(lbtc_asset_id, fee_amount));
     if let Some(last_output) = pset.outputs_mut().last_mut() {
         last_output.script_pubkey = Script::new();
     }
     log_message(&format!("[Truther][Rust] Added fee output: {}", fee_amount));
 
-    // final size check
+    // logs: final size check
     let final_tx = pset.extract_tx()?;
     let final_serialized_tx = elements::encode::serialize(&final_tx);
     let final_tx_size = final_serialized_tx.len();
     log_message(&format!("[Truther][Rust] Final tx size: {}", final_tx_size));
 
-    // log total output value
+    // logs: total output value
     let total_output: u64 = pset.outputs().iter()
         .filter(|output| !output.script_pubkey.is_op_return() && !output.script_pubkey.is_empty())
         .map(|output| output.amount.unwrap_or(0))
         .sum::<u64>() + fee_amount;
     log_message(&format!("[Truther][Rust] Total output value (including fee): {}", total_output));
 
-    // check balance
+    // logs: check balance
     if total_input != total_output {
         log_message(&format!("[Truther][Rust] WARNING: Input and output values do not match. Input: {}, Output: {}", total_input, total_output));
     } else {
@@ -263,17 +232,25 @@ pub fn create_liquid_tx_with_op_return_internal(
         });
     }
 
-    // blind all outputs exceptexcept the OP_RETURN and fee output (fee output is last output)
+    // blind all outputs except the OP_RETURN and fee output
     let input_count = pset.inputs().len();
     for i in 0..pset.outputs().len() - 1 {
         if !pset.outputs()[i].script_pubkey.is_op_return() {
             let secret_key = secp256k1_zkp::SecretKey::new(&mut rng);
-            let public_key = secp256k1_zkp::PublicKey::from_secret_key(&secp, &secret_key);
-            pset.outputs_mut()[i].blinding_key = Some(PublicKey::from_slice(&public_key.serialize()).unwrap());
+            let secp_public_key = elements::secp256k1_zkp::PublicKey::from_secret_key(&secp, &secret_key);
+
+            // Convert elements::secp256k1_zkp::PublicKey to bitcoin::PublicKey
+            let bitcoin_public_key = bitcoin::PublicKey {
+                compressed: true, // Assuming compressed is the default or required
+                inner: secp_public_key,
+            };
+
+            pset.outputs_mut()[i].blinding_key = Some(bitcoin_public_key);
             pset.outputs_mut()[i].blinder_index = Some((i % input_count) as u32);
         }
     }    
 
+    //HERE: Is this correct? blind_last ??
     log_message("[Truther][Rust] Blinding transaction");
     pset.blind_last(&mut rng, &secp, &input_secrets)?;
 
@@ -289,6 +266,7 @@ pub fn create_liquid_tx_with_op_return_internal(
         e
     })?;
     
+    //HERE: TODO: Is this really necessary? No primitiv to sign??
     log_message("[Truther][Rust] Signing inputs");
     for (i, utxo) in client_utxos.iter().enumerate() {
         log_message(&format!("[Truther][Rust] Signing input {}", i));
@@ -301,7 +279,7 @@ pub fn create_liquid_tx_with_op_return_internal(
             e
         })?;
         let private_key = child_xpriv.private_key;
-        let public_key = PublicKey::new(private_key.public_key(&secp));
+        let secp_public_key = PublicKey::from_secret_key(&secp, &private_key);
     
         let tx = pset.extract_tx().map_err(|e| {
             log_message(&format!("[Truther][Rust] Failed to extract transaction for signing input {}: {:?}", i, e));
@@ -324,8 +302,13 @@ pub fn create_liquid_tx_with_op_return_internal(
         let mut sig_serialized = signature.serialize_der().to_vec();
         sig_serialized.push(EcdsaSighashType::All as u8);
     
+        let bitcoin_public_key = bitcoin::PublicKey {
+            compressed: true, // Assuming compressed is the default or required
+            inner: secp_public_key,
+        };
+
         pset.inputs_mut()[i].partial_sigs.insert(
-            public_key,
+            bitcoin_public_key,
             sig_serialized,
         );
         log_message(&format!("[Truther][Rust] Successfully signed input {}", i));
@@ -385,21 +368,22 @@ mod tests {
         }
     }
 
+    //HERE: TODO: Doesn't work
     #[test]
     fn test_create_liquid_tx_with_op_return() {
         use elements::OutPoint;
         use elements::confidential::{Asset, Value};
         use std::ffi::CString;
 
-        let mnemonic = to_c_str("bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon");
+        let mnemonic = to_c_str("stand result access library patient interest employ shy rail law exhibit ritual");
         let send_amount = 1_000_000;
         let fee_rate = 0.01;
         let send_address = to_c_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6");
         let change_address = to_c_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6");
         let liquid_asset_id = "6f0279e9ed041c3d710a9f57d0c02928416460c4b722ae3457a11eec381c526d";
         let utxos = vec![
-            create_utxo("1234567890123456789012345678901234567890123456789012345678901234", 0, 2_000_000, liquid_asset_id),
-            create_utxo("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd", 1, 1_000_000, liquid_asset_id),
+            create_utxo("5fab3f795e6a4dbc55413121cfd0ca6d8387afba3ea7d11e5055a40159d2dbfa", 0, 2_000_000, liquid_asset_id),
+            create_utxo("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab", 1, 1_000_000, liquid_asset_id),
         ];
         let op_return_data = to_c_str("48656c6c6f20576f726c64"); // "Hello World" in hex
         let is_testnet = false;
@@ -442,8 +426,8 @@ mod tests {
         assert!(tx.output.len() >= 3, "Incorrect number of outputs"); // At least 3: main output, OP_RETURN, and fee
     
         // verify inputs
-        assert_eq!(tx.input[0].previous_output, OutPoint::new(elements::Txid::from_str("1234567890123456789012345678901234567890123456789012345678901234").unwrap(), 0));
-        assert_eq!(tx.input[1].previous_output, OutPoint::new(elements::Txid::from_str("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd").unwrap(), 1));
+        assert_eq!(tx.input[0].previous_output, OutPoint::new(elements::Txid::from_str("5fab3f795e6a4dbc55413121cfd0ca6d8387afba3ea7d11e5055a40159d2dbfa").unwrap(), 0));
+        assert_eq!(tx.input[1].previous_output, OutPoint::new(elements::Txid::from_str("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab").unwrap(), 1));
     
         // verify main output
         let main_output = &tx.output[0];
@@ -468,10 +452,6 @@ mod tests {
             let change_output = &tx.output[2]; // Assuming change is the third output
             assert!(matches!(change_output.asset, Asset::Confidential(_)), "Expected confidential asset for change");
             assert!(matches!(change_output.value, Value::Confidential(_)), "Expected confidential value for change");
-            
-            // log_message("Actual change script_pubkey: {:?}", change_output.script_pubkey);
-            // log_message("Expected change script_pubkey: {:?}", ElementsAddress::from_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6").unwrap().script_pubkey());
-            
             assert_eq!(change_output.script_pubkey, ElementsAddress::from_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6").unwrap().script_pubkey());
         }
 

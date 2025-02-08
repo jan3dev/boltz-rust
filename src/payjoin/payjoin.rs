@@ -9,7 +9,7 @@ use elements::hashes::sha256d;
 use std::str::FromStr;
 use std::time::Duration;
 
-use elements::{Address, Txid};
+use elements::{Address, Txid, Transaction, TxIn, TxOut, LockTime};
 use elements::hex::FromHex;
 use elements::AssetId;
 use elements::{pset::PartiallySignedTransaction, TxOutSecrets};
@@ -148,7 +148,14 @@ pub fn create_taxi_transaction_internal(
 
     let max_input_count = client_utxos.len() + server_utxos.len();
     let max_output_count = 4;
-    let max_network_fee = expected_network_fee(max_input_count, 0, max_output_count, is_lowball);
+    let dummy_tx = Transaction {
+        version: 2,
+        lock_time: LockTime::ZERO,
+        input: vec![TxIn::default(); max_input_count],
+        output: vec![TxOut::default(); max_output_count],
+    };
+    
+    let max_network_fee = expected_network_fee(&dummy_tx, max_input_count, 0, max_output_count, is_lowball);
     log::debug!("max_network_fee: {max_network_fee}");
     let max_asset_fee = fixed_fee + (price * max_network_fee as f64).round() as u64;
     log::debug!("max_asset_fee: {max_asset_fee}");
@@ -298,7 +305,8 @@ fn construct_pset(args: ConstructPsetArgs) -> Result<ConstructedPset, anyhow::Er
     })?);
 
     // FIXME: Separate between single-sig and multi-sig inputs
-    let network_fee = expected_network_fee(pset.inputs().len(), 0, 4, is_lowball);
+    let tx = pset.extract_tx()?;
+    let network_fee = expected_network_fee(&tx, tx.input.len(), 0, tx.output.len(), is_lowball);
 
     let asset_fee = fixed_fee + (price * network_fee as f64).round() as u64;
 
