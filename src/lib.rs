@@ -158,8 +158,9 @@ pub extern "C" fn create_liquid_tx_with_op_return(
         op_return_data,
         is_testnet,
     ) {
-        Ok(pset_base64) => {
-            let tx_c_string = CString::new(pset_base64)
+        Ok(tx) => {
+            let tx_hex = elements::encode::serialize_hex(&tx);
+            let tx_c_string = CString::new(tx_hex)
                 .unwrap_or_else(|_| CString::new("String conversion failed").unwrap());
             TxResult {
                 tx_ptr: tx_c_string.into_raw(),

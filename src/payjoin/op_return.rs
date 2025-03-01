@@ -15,7 +15,7 @@ use elements::EcdsaSighashType;
 use elements::sighash::SighashCache;
 use elements::secp256k1_zkp::{Message, Secp256k1};
 use elements::bitcoin::secp256k1::ecdsa::Signature as EcdsaSignature;
-use elements::encode::serialize;
+use elements::encode::{serialize, serialize_hex, Encodable};
 use elements::{Script, TxOut, TxOutWitness};
 use elements::confidential::{Asset, Nonce, Value, AssetBlindingFactor, ValueBlindingFactor};
 use elements::TxOutSecrets;
@@ -104,7 +104,7 @@ pub fn create_liquid_tx_with_op_return_internal(
     utxos_len: usize,
     op_return_data: *const c_char,
     is_testnet: bool,
-) -> Result<String, anyhow::Error> {
+) -> Result<elements::Transaction, anyhow::Error> {
     log_message(&format!("[Truther][Rust] Starting transaction creation with send_amount: {}, fee_rate: {}", send_amount, fee_rate));
 
     let send_address_str = unsafe { CStr::from_ptr(send_address).to_str()? };
@@ -326,16 +326,9 @@ pub fn create_liquid_tx_with_op_return_internal(
     for (i, input) in finalized_pset.input.iter().enumerate() {
         log_message(&format!("[Truther][Rust] Input {}: txid={}, vout={}", i, input.previous_output.txid, input.previous_output.vout));
     }
-
-    let serialized_tx = serialize(&finalized_pset);
-    log_message(&format!("[Truther][Rust] Serialized transaction size: {} bytes", serialized_tx.len()));
-    if serialized_tx.is_empty() {
-        return Err(anyhow::anyhow!("Serialized transaction is empty"));
-    }
-    let tx_hex = hex::encode(&serialized_tx);
-    log_message(&format!("[Truther][Rust] Hex encoded transaction size: {} characters", tx_hex.len()));
-    
-    Ok(tx_hex)
+    let serialized_pset = elements::encode::serialize(&finalized_pset);
+    let base64_encoded_pset = base64::engine::general_purpose::STANDARD.encode(&serialized_pset);
+    Ok(finalized_pset)
 }
 
 #[cfg(test)]
@@ -383,7 +376,7 @@ mod tests {
         let liquid_asset_id = "6f0279e9ed041c3d710a9f57d0c02928416460c4b722ae3457a11eec381c526d";
         let utxos = vec![
             create_utxo("5fab3f795e6a4dbc55413121cfd0ca6d8387afba3ea7d11e5055a40159d2dbfa", 0, 2_000_000, liquid_asset_id),
-            create_utxo("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab", 1, 1_000_000, liquid_asset_id),
+            create_utxo("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd", 1, 1_000_000, liquid_asset_id),
         ];
         let op_return_data = to_c_str("48656c6c6f20576f726c64"); // "Hello World" in hex
         let is_testnet = false;
@@ -414,11 +407,7 @@ mod tests {
         }    
 
         assert!(result.is_ok(), "Error occurred: {:?}", result.err());
-        let pset_base64 = result.unwrap();
-        
-        let pset_bytes = base64::engine::general_purpose::STANDARD.decode(pset_base64).expect("Failed to decode base64");
-        let pset: PartiallySignedTransaction = elements::encode::deserialize(&pset_bytes).expect("Failed to deserialize PSET");        
-        let tx = pset.extract_tx().expect("Failed to extract transaction from PSET");
+        let tx = result.unwrap();
     
         // verify the transaction structure
         assert_eq!(tx.version, 2, "Incorrect transaction version");
@@ -427,7 +416,7 @@ mod tests {
     
         // verify inputs
         assert_eq!(tx.input[0].previous_output, OutPoint::new(elements::Txid::from_str("5fab3f795e6a4dbc55413121cfd0ca6d8387afba3ea7d11e5055a40159d2dbfa").unwrap(), 0));
-        assert_eq!(tx.input[1].previous_output, OutPoint::new(elements::Txid::from_str("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefab").unwrap(), 1));
+        assert_eq!(tx.input[1].previous_output, OutPoint::new(elements::Txid::from_str("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd").unwrap(), 1));
     
         // verify main output
         let main_output = &tx.output[0];
@@ -436,7 +425,7 @@ mod tests {
         assert_eq!(main_output.script_pubkey, ElementsAddress::from_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6").unwrap().script_pubkey());
     
         // verify OP_RETURN output
-        let op_return_output = &tx.output[1];
+        let op_return_output = &tx.output[2];
         assert_eq!(op_return_output.value, Value::Explicit(0));
         assert_eq!(op_return_output.asset, Asset::Explicit(elements::AssetId::from_str(liquid_asset_id).unwrap()));
         assert!(op_return_output.script_pubkey.is_op_return());
@@ -449,7 +438,7 @@ mod tests {
     
         // verify change output if present
         if tx.output.len() > 3 {
-            let change_output = &tx.output[2]; // Assuming change is the third output
+            let change_output = &tx.output[1]; // Assuming change is the third output
             assert!(matches!(change_output.asset, Asset::Confidential(_)), "Expected confidential asset for change");
             assert!(matches!(change_output.value, Value::Confidential(_)), "Expected confidential value for change");
             assert_eq!(change_output.script_pubkey, ElementsAddress::from_str("VJL7JBzuzsfxSR8XbBJ9sDLKHyJLr5ccypeskmB4cgzNgyCvP2xYwfJXPqk9xPnQ1oA9RErgrYumsYF6").unwrap().script_pubkey());
